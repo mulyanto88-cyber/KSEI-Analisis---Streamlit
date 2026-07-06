@@ -234,13 +234,14 @@ with tab3:
             
             st.markdown(f"### 🐋 Mutasi Transaksi Whales Terdeteksi (`{t_prev}` ➔ `{t_curr}`)")
             
+            # Error diperbaiki di sini: Menggunakan RdYlGn
             fig_change_whale = px.bar(
                 df_whale_active,
                 x='Perubahan Persentase MoM (%)',
                 y='INVESTOR_NAME',
                 orientation='h',
                 color='Perubahan Persentase MoM (%)',
-                color_continuous_scale=px.colors.diverging.Velocity,
+                color_continuous_scale=px.colors.diverging.RdYlGn,
                 title="Aksi Transaksi Net Buy / Net Sell Pemegang Saham Kakap (>=1%)"
             )
             st.plotly_chart(fig_change_whale, use_container_width=True)
