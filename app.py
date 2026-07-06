@@ -139,18 +139,22 @@ with tab1:
             if has_next_month:
                 st.info(f"💡 Kolom **Kenaikan/Penurunan (%)** menunjukkan apakah sinyal pada {target_date} terbukti membuat harga naik di {next_date}.")
             else:
-                st.warning(f"⚠️ Ini adalah bulan terakhir di data. Harga bulan depan belum tersedia untuk divalidasi.")
+                st.warning(f"⚠️ Ini adalah bulan terakhir di data. Harga bulan depan belum tersedia untuk divalidasi, sehingga warna tabel disesuaikan.")
                 
-            st.dataframe(
-                df_display.style.format({
-                    'Net Flow Bandar (IDR)': '{:,.0f}',
-                    'Net Flow Ritel (IDR)': '{:,.0f}',
-                    'Harga Sinyal': 'Rp {:,}',
-                    'Harga Aktual Bulan Depan': 'Rp {:,}',
-                    'Kenaikan/Penurunan (%)': '{:+.2f}%'
-                }).background_gradient(subset=['Kenaikan/Penurunan (%)'], cmap='RdYlGn'),
-                use_container_width=True
-            )
+            # Formatting Tabel dengan Pandas Style
+            styled_df = df_display.style.format({
+                'Net Flow Bandar (IDR)': '{:,.0f}',
+                'Net Flow Ritel (IDR)': '{:,.0f}',
+                'Harga Sinyal': 'Rp {:,}',
+                'Harga Aktual Bulan Depan': 'Rp {:,}',
+                'Kenaikan/Penurunan (%)': '{:+.2f}%'
+            })
+            
+            # Cegah Error matplotlib / NaNs di bulan terakhir dengan mengecek flag has_next_month
+            if has_next_month:
+                styled_df = styled_df.background_gradient(subset=['Kenaikan/Penurunan (%)'], cmap='RdYlGn')
+                
+            st.dataframe(styled_df, use_container_width=True)
 
 # ==========================================
 # --- TAB 2: FLOW & WHALES TRACKER (MERGED) ---
