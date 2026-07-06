@@ -1,410 +1,252 @@
-import os
-import numpy as np
+import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-import streamlit as st
+import numpy as np
+import os
 
-# Set Konfigurasi Halaman
-st.set_page_config(
-    page_title="KSEI Advanced Market Intelligence Dashboard", layout="wide"
-)
+# Konfigurasi Utama Aplikasi
+st.set_page_config(page_title="Smart Money & Bandarmologi Command Center", layout="wide")
 
-st.title("🚀 KSEI Advanced Market Intelligence Dashboard")
-st.markdown(
-    "Dashboard analisis kepemilikan tingkat lanjut untuk mendeteksi pergerakan"
-    " *Big Money*, tingkat akumulasi, dan korelasi harga saham."
-)
+st.title("🛰️ Smart Money & Bandarmologi Command Center")
+st.markdown("Sistem Radar & Screening Kepemilikan KSEI untuk Mendeteksi Akumulasi Institusi, Active Funds, dan Asing.")
 
-
-# Fungsi untuk memuat data
+# Sistem Caching Data Berkinerja Tinggi
 @st.cache_data
-def load_data(shareholder_file, snapshot_file):
+def load_and_process_data(shareholder_file, snapshot_file):
+    # 1. Proses Data Shareholder (Makro)
     df_sh = pd.read_csv(shareholder_file)
-    df_sh["Date_parsed"] = pd.to_datetime(
-        df_sh["Date"], format="%d/%m/%Y", errors="coerce"
-    )
-    df_sh["Date_norm"] = df_sh["Date_parsed"].dt.strftime("%Y-%m-%d")
-
+    df_sh['Date_parsed'] = pd.to_datetime(df_sh['Date'], format='%d/%m/%Y', errors='coerce')
+    df_sh['Date_norm'] = df_sh['Date_parsed'].dt.strftime('%Y-%m-%d')
+    
+    # Kelompokkan Smart Money vs Retail
+    funds_cols = ['Local_MF', 'Foreign_MF']  # Mutual/Active Funds & ETF
+    corp_cols = ['Local_CP', 'Foreign_CP']    # Corporate / Pengendali
+    inst_cols = ['Local_IS', 'Local_PF', 'Local_IB', 'Local_SC', 'Foreign_IS', 'Foreign_PF', 'Foreign_IB', 'Foreign_SC']
+    
+    df_sh['Smart_Money_Vol'] = df_sh[funds_cols + corp_cols + inst_cols].sum(axis=1)
+    df_sh['Active_Funds_Vol'] = df_sh[funds_cols].sum(axis=1)
+    df_sh['Corporate_Vol'] = df_sh[corp_cols].sum(axis=1)
+    df_sh['Retail_Vol'] = df_sh['Local_ID'] + df_sh['Foreign_ID']
+    
+    # Net Flow Nilai (Value) Rupiah
+    df_sh['Smart_Money_Net_Val'] = df_sh[['Local_MF_Chg_Val', 'Foreign_MF_Chg_Val', 'Local_CP_Chg_Val', 'Foreign_CP_Chg_Val',
+                                          'Local_IS_Chg_Val', 'Local_PF_Chg_Val', 'Local_IB_Chg_Val', 'Local_SC_Chg_Val',
+                                          'Foreign_IS_Chg_Val', 'Foreign_PF_Chg_Val', 'Foreign_IB_Chg_Val', 'Foreign_SC_Chg_Val']].sum(axis=1)
+    df_sh['Active_Funds_Net_Val'] = df_sh[['Local_MF_Chg_Val', 'Foreign_MF_Chg_Val']].sum(axis=1)
+    df_sh['Retail_Net_Val'] = df_sh['Local_ID_Chg_Val'] + df_sh['Foreign_ID_Chg_Val']
+    
+    # 2. Proses Data Snapshot 1% (Mikro Whales)
     df_sn = pd.read_csv(snapshot_file)
-    df_sn["DATE_parsed"] = pd.to_datetime(
-        df_sn["DATE"], format="%d/%m/%Y %H:%M", errors="coerce"
-    )
-    df_sn["Date_norm"] = df_sn["DATE_parsed"].dt.strftime("%Y-%m-%d")
+    df_sn['DATE_parsed'] = pd.to_datetime(df_sn['DATE'], format='%d/%m/%Y %H:%M', errors='coerce')
+    df_sn['Date_norm'] = df_sn['DATE_parsed'].dt.strftime('%Y-%m-%d')
+    
     return df_sh, df_sn
 
-
-# Sidebar - Data Source
-st.sidebar.header("📁 Data Source")
+# Integrasi File Otomatis / Manual Upload
+st.sidebar.header("📁 Data Source Pipeline")
 sh_default = "KSEI_Shareholder_Pure_KSEI_OK.csv"
 sn_default = "KSE_1Persen_Monthly_Snapshot_OK.csv"
 
-uploaded_sh = st.sidebar.file_uploader(
-    "Upload Shareholder Pure KSEI CSV", type=["csv"]
-)
-uploaded_sn = st.sidebar.file_uploader(
-    "Upload 1% Monthly Snapshot CSV", type=["csv"]
-)
+uploaded_sh = st.sidebar.file_uploader("Upload Shareholder Pure KSEI CSV", type=["csv"])
+uploaded_sn = st.sidebar.file_uploader("Upload 1% Monthly Snapshot CSV", type=["csv"])
 
-file_sh_path = (
-    uploaded_sh
-    if uploaded_sh is not None
-    else (sh_default if os.path.exists(sh_default) else None)
-)
-file_sn_path = (
-    uploaded_sn
-    if uploaded_sn is not None
-    else (sn_default if os.path.exists(sn_default) else None)
-)
+file_sh_path = uploaded_sh if uploaded_sh is not None else (sh_default if os.path.exists(sh_default) else None)
+file_sn_path = uploaded_sn if uploaded_sn is not None else (sn_default if os.path.exists(sn_default) else None)
 
 if not file_sh_path or not file_sn_path:
-    st.warning(
-        "⚠️ Silakan upload atau letakkan kedua file CSV di folder aplikasi."
-    )
+    st.warning("⚠️ Menunggu pipeline data... Pastikan file CSV diletakkan di direktori yang sama atau silakan upload via sidebar.")
     st.stop()
 
-df_sh, df_sn = load_data(file_sh_path, file_sn_path)
+# Eksekusi Data Loader
+df_sh, df_sn = load_and_process_data(file_sh_path, file_sn_path)
 
+# Dictionary Labeling KSEI
 ksei_labels = {
-    "IS": "Insurance",
-    "CP": "Corporate",
-    "PF": "Pension Fund",
-    "IB": "Investment Bank",
-    "ID": "Individual (Retail)",
-    "MF": "Mutual Fund",
-    "SC": "Securities Co.",
-    "FD": "Foundation",
-    "OT": "Others",
+    'IS': 'Insurance', 'CP': 'Corporate', 'PF': 'Pension Fund', 
+    'IB': 'Investment Bank', 'ID': 'Individual (Retail)', 'MF': 'Mutual Fund / ETF', 
+    'SC': 'Securities Co.', 'FD': 'Foundation', 'OT': 'Others'
 }
 
-# Sidebar - Filter Saham
-ticker_list = sorted(df_sh["Code"].unique())
-selected_ticker = st.sidebar.selectbox(
-    "🎯 Pilih Kode Saham (Ticker):",
-    ticker_list,
-    index=ticker_list.index("AADI") if "AADI" in ticker_list else 0,
-)
+# Deklarasi Tab Utama Kontrol
+tab1, tab2, tab3 = st.tabs(["🛰️ Smart Money Radar (Screener)", "🔍 Ticker Bandarmologi Flow", "🐳 Whales Identity Tracking"])
 
-# Pemrosesan Data per Ticker
-df_sh_ticker = (
-    df_sh[df_sh["Code"] == selected_ticker].sort_values("Date_parsed").copy()
-)
-df_sn_ticker = (
-    df_sn[df_sn["SHARE_CODE"] == selected_ticker]
-    .sort_values("DATE_parsed")
-    .copy()
-)
-
-# Perhitungan Metrics Tambahan Tingkat Lanjut (Advanced Feature)
-if not df_sh_ticker.empty:
-    df_sh_ticker["Price_Return_Pct"] = (
-        df_sh_ticker["Price"].pct_change() * 100
-    )
-
-    # Pengelompokan Big Money (Institusi) vs Retail
-    inst_local = [
-        "Local_IS",
-        "Local_CP",
-        "Local_PF",
-        "Local_IB",
-        "Local_MF",
-        "Local_SC",
-    ]
-    inst_foreign = [
-        "Foreign_IS",
-        "Foreign_CP",
-        "Foreign_PF",
-        "Foreign_IB",
-        "Foreign_MF",
-        "Foreign_SC",
-    ]
-
-    df_sh_ticker["Big_Money_Vol"] = df_sh_ticker[
-        inst_local + inst_foreign
-    ].sum(axis=1)
-    df_sh_ticker["Retail_Vol"] = (
-        df_sh_ticker["Local_ID"] + df_sh_ticker["Foreign_ID"]
-    )
-    df_sh_ticker["Big_Money_Chg"] = df_sh_ticker["Big_Money_Vol"].diff()
-
-    # Hitung Herfindahl-Hirschman Index (HHI) dari Data Snapshot 1% untuk mengukur Konsentrasi Bandar
-    hhi_list = []
-    for date in df_sh_ticker["Date_norm"]:
-        snap_date = df_sn_ticker[df_sn_ticker["Date_norm"] == date]
-        if not snap_date.empty:
-            hhi = np.sum(snap_date["PERCENTAGE"] ** 2)
-            hhi_list.append(hhi)
-        else:
-            hhi_list.append(np.nan)
-    df_sh_ticker["HHI_Index"] = hhi_list
-
-# Layout Tab Baru Lebih Komprehensif
-tab1, tab2, tab3 = st.tabs([
-    "📊 Market Structure & Big Money Tracking",
-    "🦅 Top 1% Whales Analysis",
-    "🔬 Quant Correlation Matrix",
-])
-
-# --- TAB 1: MARKET STRUCTURE & BIG MONEY ---
+# ==========================================
+# --- TAB 1: SMART MONEY RADAR (SCREENER) ---
+# ==========================================
 with tab1:
-    st.subheader(
-        f"Analisis Pergerakan Big Money & Struktur Kepemilikan: {selected_ticker}"
-    )
-    if df_sh_ticker.empty:
-        st.write("Data Kosong")
+    st.subheader("Sistem Penyaringan Saham Berdasarkan Pola Akumulasi")
+    st.markdown("Gunakan panel ini untuk menyaring saham secara instan di mana **Funds/Corporate melakukan akumulasi besar** sementara **Retail sedang jualan (distribusi/cutloss)**.")
+    
+    # Filter Kondisi Pasar pada Bulan Terakhir
+    latest_market_date = df_sh['Date_norm'].max()
+    df_market_latest = df_sh[df_sh['Date_norm'] == latest_market_date].copy()
+    
+    # Kontrol Parameter Screener
+    col_f1, col_f2, col_f3 = st.columns(3)
+    with col_f1:
+        min_price = st.number_input("Harga Minimum (Rp)", min_value=0, value=100, step=50)
+    with col_f2:
+        smart_money_filter = st.selectbox("Fokus Utama Aliran Dana:", ["Active Funds & ETF Only", "Total Smart Money (Funds + Corp + Inst)"])
+    with col_f3:
+        retail_condition = st.checkbox("Hanya Tampilkan Saat Ritel Net SELL (Good Sign)", value=True)
+        
+    # Kalkulasi Logika Filter Kuantitatif
+    df_screened = df_market_latest[df_market_latest['Price'] >= min_price].copy()
+    
+    if smart_money_filter == "Active Funds & ETF Only":
+        df_screened['Selected_Net_Val'] = df_screened['Active_Funds_Net_Val']
     else:
+        df_screened['Selected_Net_Val'] = df_screened['Smart_Money_Net_Val']
+        
+    if retail_condition:
+        df_screened = df_screened[df_screened['Retail_Net_Val'] < 0]
+        
+    # Urutkan berdasarkan Net Buy Dana Terbesar
+    df_screened = df_screened.sort_values(by='Selected_Net_Val', ascending=False).reset_index(drop=True)
+    
+    # Tampilan Hasil Radar Table
+    st.markdown(f"### 🎯 Hasil Analisis Screening Pasar per Tanggal Data Terakhir: `{latest_market_date}`")
+    
+    display_cols = ['Code', 'Price', 'Selected_Net_Val', 'Retail_Net_Val', 'Top_Buyer', 'Top_Seller']
+    df_display = df_screened[display_cols].rename(columns={
+        'Code': 'Ticker',
+        'Price': 'Harga Terakhir',
+        'Selected_Net_Val': 'Net Flow Smart Money (IDR)',
+        'Retail_Net_Val': 'Net Flow Ritel (IDR)',
+        'Top_Buyer': 'Kategori Pembeli Utama',
+        'Top_Seller': 'Kategori Penjual Utama'
+    })
+    
+    st.dataframe(
+        df_display.style.format({
+            'Net Flow Smart Money (IDR)': '{:,.0f}',
+            'Net Flow Ritel (IDR)': '{:,.0f}',
+            'Harga Terakhir': 'Rp {:,}'
+        }),
+        use_container_width=True,
+        column_config={
+            "Net Flow Smart Money (IDR)": st.column_config.NumberColumn(format="Rp %,.0f"),
+            "Net Flow Ritel (IDR)": st.column_config.NumberColumn(format="Rp %,.0f"),
+        }
+    )
+
+# ==========================================
+# --- TAB 2: TICKER BANDARMOLOGI FLOW ---
+# ==========================================
+with tab2:
+    ticker_list = sorted(df_sh['Code'].unique())
+    selected_ticker = st.selectbox("🎯 Pilih Kode Saham untuk Analisis Mendalam:", ticker_list, index=ticker_list.index('AADI') if 'AADI' in ticker_list else 0)
+    
+    df_sh_ticker = df_sh[df_sh['Code'] == selected_ticker].sort_values('Date_parsed').copy()
+    df_sn_ticker = df_sn[df_sn['SHARE_CODE'] == selected_ticker].sort_values('DATE_parsed').copy()
+    
+    if df_sh_ticker.empty:
+        st.error("Data tidak ditemukan.")
+    else:
+        df_sh_ticker['Price_Return_Pct'] = df_sh_ticker['Price'].pct_change() * 100
+        
+        # Hitung HHI untuk Ticker Terpilih
+        hhi_list = []
+        for date in df_sh_ticker['Date_norm']:
+            snap_date = df_sn_ticker[df_sn_ticker['Date_norm'] == date]
+            hhi = np.sum(snap_date['PERCENTAGE'] ** 2) if not snap_date.empty else np.nan
+            hhi_list.append(hhi)
+        df_sh_ticker['HHI_Index'] = hhi_list
+        
         latest = df_sh_ticker.iloc[-1]
         prev = df_sh_ticker.iloc[-2] if len(df_sh_ticker) > 1 else latest
-
-        # Row 1: KPI Blocks dengan Delta Perubahan
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric(
-            "Harga Terakhir",
-            f"Rp {latest['Price']:,}",
-            (
-                f"{latest['Price_Return_Pct']:.2f}%"
-                if not pd.isna(latest["Price_Return_Pct"])
-                else "0%"
-            ),
+        
+        # Status Detektor Kekuatan Akumulasi
+        st.markdown("### 🚦 Status Detektor Bandarmologi")
+        sd1, sd2, sd3 = st.columns(3)
+        
+        # Aturan Logika Klasifikasi Status
+        smart_flow = latest['Smart_Money_Net_Val']
+        retail_flow = latest['Retail_Net_Val']
+        
+        if smart_flow > 0 and retail_flow < 0:
+            status_bandar = "🔥 AKUMULASI MASIF (Big Money Masuk / Ritel Keluar)"
+            color_box = st.success
+        elif smart_flow > 0 and retail_flow > 0:
+            status_bandar = "⚖️ PARTISIPASI PUBLIK (Kedua Pihak Akumulasi)"
+            color_box = st.info
+        elif smart_flow < 0 and retail_flow > 0:
+            status_bandar = "🚨 DISTRIBUSI (Big Money Jualan / Ritel Tampung)"
+            color_box = st.error
+        else:
+            status_bandar = "📉 MARK DOWN (Fase Penurunan Sunyi)"
+            color_box = st.warning
+            
+        color_box(f"**Kondisi Tren Saat Ini:** {status_bandar}")
+        
+        # Tampilan Grafik Intuitif Komparasi Kumulatif Flow vs Harga
+        st.markdown("### 📊 Pola Aliran Dana Kumulatif Terhadap Harga")
+        
+        fig_cum = go.Figure()
+        # Garis Volume Kepemilikan Active Funds / ETF
+        fig_cum.add_trace(go.Scatter(x=df_sh_ticker['Date_norm'], y=df_sh_ticker['Active_Funds_Vol'], name='Volume Active Funds & ETF', line=dict(color='#00CC96', width=4)))
+        # Garis Volume Ritel
+        fig_cum.add_trace(go.Scatter(x=df_sh_ticker['Date_norm'], y=df_sh_ticker['Retail_Vol'], name='Volume Ritel (Individual)', line=dict(color='#EF553B', width=2, dash='dot')))
+        # Sumbu Kanan: Harga Saham
+        fig_cum.add_trace(go.Scatter(x=df_sh_ticker['Date_norm'], y=df_sh_ticker['Price'], name='Harga Saham (Rp)', line=dict(color='#AB63FA', width=3), yaxis='y2'))
+        
+        fig_cum.update_layout(
+            title=f"Perbandingan Pergerakan Dana Active Funds vs Ritel Pada Saham {selected_ticker}",
+            xaxis=dict(title='Bulan'),
+            yaxis=dict(title='Jumlah Saham (Lembar)', showgrid=False),
+            yaxis2=dict(title='Harga Saham (Rp)', overlaying='y', side='right', showgrid=True),
+            legend=dict(orientation="h", y=1.1, x=0)
         )
+        st.plotly_chart(fig_cum, use_container_width=True)
 
-        bm_pct = (latest["Big_Money_Vol"] / latest["Total_Shares"]) * 100
-        bm_delta = (
-            (
-                (latest["Big_Money_Vol"] - prev["Big_Money_Vol"])
-                / prev["Total_Shares"]
-            )
-            * 100
-            if len(df_sh_ticker) > 1
-            else 0
-        )
-        c2.metric(
-            "Porsi Big Money (Institusi)",
-            f"{bm_pct:.2f} %",
-            f"{bm_delta:+.2f}% MoM",
-        )
-
-        ret_pct = (latest["Retail_Vol"] / latest["Total_Shares"]) * 100
-        ret_delta = (
-            ((latest["Retail_Vol"] - prev["Retail_Vol"]) / prev["Total_Shares"])
-            * 100
-            if len(df_sh_ticker) > 1
-            else 0
-        )
-        c3.metric(
-            "Porsi Ritel (Individual)",
-            f"{ret_pct:.2f} %",
-            f"{ret_delta:+.2f}% MoM",
-        )
-
-        # Interpretasi HHI
-        hhi_val = (
-            latest["HHI_Index"] if not pd.isna(latest["HHI_Index"]) else 0
-        )
-        hhi_status = (
-            "Sangat Terkonsentrasi (Bandar Dominan)"
-            if hhi_val > 1500
-            else "Terdistribusi (Ritel Dominan)"
-        )
-        c4.metric(
-            "Indeks Konsentrasi (HHI)",
-            f"{hhi_val:,.1f}",
-            hhi_status,
-            delta_color="off",
-        )
-
-        st.markdown("---")
-
-        # Chart Dual Axis: Perubahan Kepemilikan Big Money vs Perubahan Harga
-        st.markdown("### 📈 Tren Akumulasi Big Money vs Harga Saham")
-        fig_bm = go.Figure()
-        fig_bm.add_trace(
-            go.Scatter(
-                x=df_sh_ticker["Date_norm"],
-                y=df_sh_ticker["Big_Money_Vol"],
-                name="Volume Big Money",
-                mode="lines+markers",
-                line=dict(color="#1f77b4", width=4),
-                yaxis="y",
-            )
-        )
-        fig_bm.add_trace(
-            go.Scatter(
-                x=df_sh_ticker["Date_norm"],
-                y=df_sh_ticker["Price"],
-                name="Harga Saham",
-                mode="lines+markers",
-                line=dict(color="#ff7f0e", width=3, dash="dash"),
-                yaxis="y2",
-            )
-        )
-
-        fig_bm.update_layout(
-            xaxis=dict(title="Periode Bulanan"),
-            yaxis=dict(title="Total Saham Institusi (Lembar)", showgrid=False),
-            yaxis2=dict(
-                title="Harga Saham (Rp)",
-                overlaying="y",
-                side="right",
-                showgrid=True,
-            ),
-            legend=dict(orientation="h", y=1.1, x=0),
-        )
-        st.plotly_chart(fig_bm, use_container_width=True)
-
-        # Analisis Top Buyer & Seller Sektoral Bulan Ini (Dengan Pengaman Anti-Crash)
-        st.markdown("### 🕵️ Penggerak Utama Bulan Ini (Top Player)")
-        cc1, cc2 = st.columns(2)
-
-        top_buyer = (
-            latest["Top_Buyer"]
-            if not pd.isna(latest["Top_Buyer"])
-            else "Tidak Ada Data"
-        )
-        top_buyer_val = (
-            0 if pd.isna(latest["Top_Buyer_Val"]) else latest["Top_Buyer_Val"]
-        )
-
-        top_seller = (
-            latest["Top_Seller"]
-            if not pd.isna(latest["Top_Seller"])
-            else "Tidak Ada Data"
-        )
-        top_seller_val = (
-            0
-            if pd.isna(latest["Top_Seller_Val"])
-            else latest["Top_Seller_Val"]
-        )
-
-        with cc1:
-            st.success(
-                f"🏆 **Top Net Buyer Bulan Ini:** {top_buyer} (Value: Rp"
-                f" {top_buyer_val:,.0f})"
-            )
-        with cc2:
-            # Menggunakan st.error sebagai pengganti st.danger
-            st.error(
-                f"🚨 **Top Net Seller Bulan Ini:** {top_seller} (Value: Rp"
-                f" {top_seller_val:,.0f})"
-            )
-
-# --- TAB 2: WHALES ANALYSIS (1%) ---
-with tab2:
-    st.subheader("Analisis Kepemilikan Whales / Konglomerasi (>= 1%)")
-    if df_sn_ticker.empty:
-        st.info("Data snapshot tidak tersedia.")
-    else:
-        dates = sorted(df_sn_ticker["Date_norm"].unique())
-        selected_d = st.selectbox(
-            "📅 Pilih Bulan Evaluasi Whales:", dates, index=len(dates) - 1
-        )
-
-        df_selected_snap = df_sn_ticker[
-            df_sn_ticker["Date_norm"] == selected_d
-        ].sort_values("PERCENTAGE", ascending=False)
-
-        col_s1, col_s2 = st.columns([2, 1])
-        with col_s1:
-            fig_whales = px.bar(
-                df_selected_snap.head(10),
-                x="PERCENTAGE",
-                y="INVESTOR_NAME",
-                orientation="h",
-                title=f"Top 10 Pemegang Saham Terbesar ({selected_d})",
-                color="INVESTOR_TYPE",
-                labels={
-                    "INVESTOR_NAME": "Nama Entitas/Investor",
-                    "PERCENTAGE": "Porsi (%)",
-                },
-            )
-            fig_whales.update_layout(yaxis={"categoryorder": "total ascending"})
-            st.plotly_chart(fig_whales, use_container_width=True)
-
-        with col_s2:
-            st.markdown("#### 🏛️ Dominasi Tipe Entitas Whales")
-            df_type_summary = (
-                df_selected_snap.groupby("INVESTOR_TYPE")["PERCENTAGE"]
-                .sum()
-                .reset_index()
-            )
-            fig_pie_type = px.pie(
-                df_type_summary,
-                values="PERCENTAGE",
-                names="INVESTOR_TYPE",
-                hole=0.4,
-            )
-            st.plotly_chart(fig_pie_type, use_container_width=True)
-
-# --- TAB 3: QUANT CORRELATION MATRIX ---
+# ==========================================
+# --- TAB 3: WHALES IDENTITY TRACKING ---
+# ==========================================
 with tab3:
-    st.subheader("🔬 Quant Analysis: Korelasi & Scatter Matrix")
-    if len(df_sh_ticker) < 3:
-        st.warning(
-            "⚠️ Data historis bulanan terlalu pendek untuk membuat pemodelan"
-            " regresi OLS trendline yang valid (Minimal butuh 3 bulan)."
-        )
+    st.subheader("Melacak Identitas Asli Pemegang Saham Kakap (>= 1%)")
+    st.markdown("Di sini kita bisa melihat langsung *siapa nama entitas atau perusahaan konglomerasi asli* yang merubah kepemilikannya bulan ini.")
+    
+    if df_sn_ticker.empty:
+        st.info("Data snapshot detil entitas tidak tersedia untuk saham ini.")
     else:
-        chg_vol_cols = [
-            c for c in df_sh_ticker.columns if c.endswith("_Chg_Vol")
-        ]
-        corr_matrix = df_sh_ticker[chg_vol_cols + ["Price_Return_Pct"]].corr()
-
-        price_corr = (
-            corr_matrix["Price_Return_Pct"]
-            .drop("Price_Return_Pct")
-            .sort_values(ascending=False)
-            .reset_index()
-        )
-        price_corr.columns = ["Kategori KSEI", "Korelasi Koefisien"]
-
-        price_corr["Nama Kategori"] = price_corr["Kategori KSEI"].apply(
-            lambda x: (
-                f"{'Lokal' if 'Local' in x else 'Asing'} -"
-                f" {ksei_labels.get(x.split('_')[1], x.split('_')[1])}"
+        unique_dates = sorted(df_sn_ticker['Date_norm'].unique())
+        
+        if len(unique_dates) < 2:
+            st.warning("Dibutuhkan data minimal 2 bulan untuk melihat perubahan posisi Whales.")
+            # Tetap tampilkan data bulan terakhir jika hanya ada 1 bulan
+            latest_d = unique_dates[-1]
+            st.dataframe(df_sn_ticker[df_sn_ticker['Date_norm'] == latest_d][['INVESTOR_NAME', 'INVESTOR_TYPE', 'PERCENTAGE']])
+        else:
+            # Bandingkan MoM Posisi Kepemilikan Whales
+            t_curr = unique_dates[-1]
+            t_prev = unique_dates[-2]
+            
+            df_c = df_sn_ticker[df_sn_ticker['Date_norm'] == t_curr][['INVESTOR_NAME', 'PERCENTAGE', 'INVESTOR_TYPE', 'DOMICILE']].rename(columns={'PERCENTAGE': 'Pct_Current'})
+            df_p = df_sn_ticker[df_sn_ticker['Date_norm'] == t_prev][['INVESTOR_NAME', 'PERCENTAGE']].rename(columns={'PERCENTAGE': 'Pct_Previous'})
+            
+            # Gabungkan Data untuk melihat selisih perubahan persen kepemilikan saham individu kakap
+            df_whale_change = pd.merge(df_c, df_p, on='INVESTOR_NAME', how='outer').fillna(0)
+            df_whale_change['Perubahan Persentase MoM (%)'] = df_whale_change['Pct_Current'] - df_whale_change['Pct_Previous']
+            
+            # Saring entitas yang aktif bergerak melakukan transaksi perubahan porsi kepemilikan
+            df_whale_active = df_whale_change[df_whale_change['Perubahan Persentase MoM (%)'] != 0].sort_values(by='Perubahan Persentase MoM (%)', ascending=False)
+            
+            st.markdown(f"### 🐋 Mutasi Transaksi Whales Terdeteksi (`{t_prev}` ➔ `{t_curr}`)")
+            
+            fig_change_whale = px.bar(
+                df_whale_active,
+                x='Perubahan Persentase MoM (%)',
+                y='INVESTOR_NAME',
+                orientation='h',
+                color='Perubahan Persentase MoM (%)',
+                color_continuous_scale=px.colors.diverging.Velocity,
+                title="Aksi Transaksi Net Buy / Net Sell Pemegang Saham Kakap (>=1%)"
             )
-        )
-
-        st.markdown(
-            "### Hubungan Linear Perubahan Volume Investor vs Return Saham"
-        )
-        fig_corr_bar = px.bar(
-            price_corr,
-            x="Korelasi Koefisien",
-            y="Nama Kategori",
-            orientation="h",
-            title=(
-                "Kategori Investor Mana yang Paling Menggerakkan Harga"
-                f" {selected_ticker}?"
-            ),
-            color="Korelasi Koefisien",
-            color_continuous_scale=px.colors.diverging.Tealrose,
-        )
-        fig_corr_bar.update_layout(yaxis={"categoryorder": "total ascending"})
-        st.plotly_chart(fig_corr_bar, use_container_width=True)
-
-        st.markdown("### 📊 Pola Distribusi & OLS Trendline Regresi")
-        target_investor = st.selectbox(
-            "Pilih Kategori Investor untuk visualisasi sebaran:",
-            price_corr["Kategori KSEI"].tolist(),
-        )
-
-        clean_target_name = price_corr[
-            price_corr["Kategori KSEI"] == target_investor
-        ]["Nama Kategori"].values[0]
-
-        fig_scat = px.scatter(
-            df_sh_ticker.dropna(subset=["Price_Return_Pct"]),
-            x=target_investor,
-            y="Price_Return_Pct",
-            trendline="ols",
-            text="Date_norm",
-            title=(
-                "Analisis Regresi: Perubahan Volume"
-                f" {clean_target_name} vs Return Harga"
-            ),
-            labels={
-                target_investor: "Perubahan Volume Transaksi (Lembar)",
-                "Price_Return_Pct": "Return Harga Saham (%)",
-            },
-        )
-        st.plotly_chart(fig_scat, use_container_width=True)
+            st.plotly_chart(fig_change_whale, use_container_width=True)
+            
+            st.markdown("#### Tabel Detil Mutasi Rekening Whales (>1%)")
+            st.dataframe(
+                df_whale_active[['INVESTOR_NAME', 'INVESTOR_TYPE', 'DOMICILE', 'Pct_Previous', 'Pct_Current', 'Perubahan Persentase MoM (%)']].reset_index(drop=True),
+                use_container_width=True
+            )
