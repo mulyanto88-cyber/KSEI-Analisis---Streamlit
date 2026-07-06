@@ -3,12 +3,28 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import numpy as np
+import json
 import os
 import io
 
 st.set_page_config(page_title="Smart Money & Bandarmologi Command Center", layout="wide")
 st.title("🛰️ Smart Money & Bandarmologi Command Center")
 st.markdown("Sistem Radar, Backtest Akumulasi, dan Pelacakan Entitas Whales Terpadu.")
+
+# =========================================================
+# ECHARTS RENDERER HELPER
+# =========================================================
+def render_echart(option, height="400px"):
+    html = f"""
+    <div id="echart-container" style="width:100%;height:{height};"></div>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+    <script>
+        var chart = echarts.init(document.getElementById('echart-container'));
+        chart.setOption({json.dumps(option)});
+        window.addEventListener('resize', function(){{ chart.resize(); }});
+    </script>
+    """
+    st.components.v1.html(html, height=int(height.replace("px",""))+40)
 
 # =========================================================
 # DATA LOADING
@@ -221,12 +237,43 @@ with tab1:
 
             st.dataframe(styled_df, use_container_width=True)
 
-            # Mini chart: Top 10 bar
+            # Mini chart: Top 10 bar (Plotly kept) + ECharts Rich Bar
             top10 = df_curr.head(10).copy()
             if not top10.empty:
-                fig_top = px.bar(top10, x='Code', y='Net_Buy_Bandar', color='Validasi_Return_%' if has_next_month else None,
-                                 color_continuous_scale='RdYlGn', title=f"Top 10 Net Flow Bandar - {target_date}")
-                st.plotly_chart(fig_top, use_container_width=True)
+                col_bar1, col_bar2 = st.columns(2)
+                with col_bar1:
+                    fig_top = px.bar(top10, x='Code', y='Net_Buy_Bandar', color='Validasi_Return_%' if has_next_month else None,
+                                     color_continuous_scale='RdYlGn', title=f"Top 10 Net Flow Bandar - {target_date}")
+                    st.plotly_chart(fig_top, use_container_width=True)
+                with col_bar2:
+                    top10_sorted = top10.sort_values('Net_Buy_Bandar')
+                    codes = top10_sorted['Code'].tolist()
+                    values = top10_sorted['Net_Buy_Bandar'].tolist()
+                    returns = top10_sorted['Validasi_Return_%'].tolist() if has_next_month else [0]*len(codes)
+                    colors = ['#00da3c' if r >= 0 else '#ff4444' for r in returns] if has_next_month else ['#5470c6']*len(codes)
+                    echart_option = {
+                        "tooltip": {"trigger": "axis", "axisPointer": {"type": "shadow"}},
+                        "grid": {"left": "3%", "right": "4%", "bottom": "3%", "containLabel": True},
+                        "xAxis": {"type": "value"},
+                        "yAxis": {"type": "category", "data": codes[::-1], "axisLabel": {"fontSize": 11}},
+                        "series": [{
+                            "type": "bar",
+                            "data": [{"value": v, "itemStyle": {"color": colors[i]}} for i, v in enumerate(values)],
+                            "barWidth": "60%",
+                            "label": {
+                                "show": True,
+                                "position": "right",
+                                "formatter": "Rp {c}",
+                                "fontSize": 10
+                            },
+                            "itemStyle": {
+                                "borderRadius": [0, 4, 4, 0]
+                            }
+                        }]
+                    }
+
+                    st.markdown(f"**ECharts: Top 10 Gradient Bar — {target_date}**")
+                    render_echart(echart_option, height="350px")
 
 # =========================================================
 # TAB 2: TOP MOVERS & SEKTOR
@@ -299,6 +346,45 @@ with tab2:
                                   color='Total_Flow', color_continuous_scale='RdYlGn')
             st.plotly_chart(fig_tree, use_container_width=True)
 
+            # ECharts Sankey Diagram: Investor categories -> Sectors
+            st.markdown("### ECharts Sankey: Aliran Investor ke Sektor")
+            investor_cats = ['Local_MF', 'Foreign_MF', 'Local_CP', 'Foreign_CP', 'Local_IS', 'Local_PF',
+                            'Local_IB', 'Local_SC', 'Foreign_IS', 'Foreign_PF', 'Foreign_IB', 'Foreign_SC']
+            vol_cols = [c + '_Chg_Val' for c in investor_cats]
+            df_sankey = df_agg.groupby('Type').agg({c: 'sum' for c in vol_cols}).reset_index()
+            cat_labels = investor_cats
+            sector_labels = df_sankey['Type'].tolist()
+            labels = cat_labels + sector_labels
+            sector_name_map = {s: i for i, s in enumerate(sector_labels)}
+            cat_name_map = {c: i for i, c in enumerate(cat_labels)}
+            links = []
+            for _, row in df_sankey.iterrows():
+                sec = row['Type']
+                for cat in investor_cats:
+                    val = row[cat + '_Chg_Val']
+                    if val > 0:
+                        links.append({
+                            "source": cat_name_map[cat],
+                            "target": len(cat_labels) + sector_name_map[sec],
+                            "value": abs(val)
+                        })
+            if links:
+                sankey_option = {
+                    "title": {"text": "Sankey: Investor → Sektor", "left": "center", "textStyle": {"fontSize": 14}},
+                    "tooltip": {"trigger": "item", "triggerOn": "mousemove"},
+                    "series": [{
+                        "type": "sankey",
+                        "layout": "none",
+                        "emphasis": {"focus": "adjacency"},
+                        "nodeAlign": "left",
+                        "data": [{"name": c} for c in labels],
+                        "links": links,
+                        "lineStyle": {"curveness": 0.5},
+                        "label": {"fontSize": 10}
+                    }]
+                }
+                render_echart(sankey_option, height="500px")
+
 # =========================================================
 # TAB 3: FLOW & WHALES
 # =========================================================
@@ -335,7 +421,7 @@ with tab3:
         else:
             target_col.warning("📉 **MARK DOWN**: Kedua pihak pasif.")
 
-        # Multi-axis chart: Volume & Harga
+        # Plotly multi-axis chart (kept)
         fig_cum = go.Figure()
         fig_cum.add_trace(go.Scatter(x=df_sh_t['Date_norm'], y=df_sh_t['Active_Funds_Vol'], name='Vol Active Funds', line=dict(color='#00CC96', width=4)))
         fig_cum.add_trace(go.Scatter(x=df_sh_t['Date_norm'], y=df_sh_t['Retail_Vol'], name='Vol Ritel', line=dict(color='#EF553B', width=2, dash='dot')))
@@ -349,6 +435,47 @@ with tab3:
             legend=dict(orientation="h", y=1.1, x=0), height=400
         )
         target_col.plotly_chart(fig_cum, use_container_width=True)
+
+        # ECharts Timeline/Rich Line (supplement)
+        echart_timeline_option = {
+            "title": {"text": f"ECharts Multi-Series: {ticker}", "left": "center", "textStyle": {"fontSize": 13}},
+            "tooltip": {"trigger": "axis"},
+            "legend": {"data": ["Harga (Rp)", "SM Net Flow (IDR)", "Active Funds Vol"], "top": 30},
+            "grid": {"left": "5%", "right": "5%", "bottom": "10%"},
+            "xAxis": {"type": "category", "data": df_sh_t['Date_norm'].tolist(), "axisLabel": {"rotate": 30, "fontSize": 9}},
+            "yAxis": [
+                {"type": "value", "name": "Volume / Flow"},
+                {"type": "value", "name": "Harga (Rp)", "position": "right"}
+            ],
+            "series": [
+                {
+                    "name": "Harga (Rp)",
+                    "type": "line",
+                    "data": df_sh_t['Price'].tolist(),
+                    "smooth": True,
+                    "lineStyle": {"width": 3, "color": "#AB63FA"},
+                    "areaStyle": {"color": {"type": "linear", "x": 0, "y": 0, "x2": 0, "y2": 1, "colorStops": [{"offset": 0, "color": "rgba(171,99,250,0.4)"}, {"offset": 1, "color": "rgba(171,99,250,0.01)"}]}},
+                    "yAxisIndex": 1
+                },
+                {
+                    "name": "SM Net Flow (IDR)",
+                    "type": "bar",
+                    "data": df_sh_t['Smart_Money_Net_Val'].tolist(),
+                    "itemStyle": {"color": {"type": "linear", "x": 0, "y": 0, "x2": 0, "y2": 1, "colorStops": [{"offset": 0, "color": "#FFA15A"}, {"offset": 1, "color": "#FFA15A"}]}},
+                    "yAxisIndex": 0
+                },
+                {
+                    "name": "Active Funds Vol",
+                    "type": "line",
+                    "data": df_sh_t['Active_Funds_Vol'].tolist(),
+                    "smooth": True,
+                    "lineStyle": {"width": 2, "color": "#00CC96"},
+                    "yAxisIndex": 0
+                }
+            ]
+        }
+        target_col.markdown(f"**ECharts Multi-Series Timeline — {ticker}**")
+        render_echart(echart_timeline_option, height="400px")
 
         # Whales
         target_col.markdown("### 🐋 Pelacakan Entitas Whales (>= 1%)")
@@ -382,10 +509,62 @@ with tab3:
             df_latest_whale = df_sn_t[df_sn_t['Date_norm'] == latest_date]
             top5_pct = df_latest_whale.nlargest(5, 'PERCENTAGE')['PERCENTAGE'].sum()
             wci = min(top5_pct / 100.0, 1.0)
-            st.metric("🐋 Whales Concentration Index (Top 5)", f"{top5_pct:.1f}%",
-                      "Terkonsentrasi" if wci >= 0.5 else "Tersebar", delta_color="inverse")
+            wci_col1, wci_col2 = st.columns(2)
+            with wci_col1:
+                st.metric("🐋 Whales Concentration Index (Top 5)", f"{top5_pct:.1f}%",
+                          "Terkonsentrasi" if wci >= 0.5 else "Tersebar", delta_color="inverse")
+            with wci_col2:
+                # ECharts Liquid Fill for WCI
+                liquid_option = {
+                    "series": [{
+                        "type": "liquidFill",
+                        "data": [round(wci, 2)],
+                        "radius": "70%",
+                        "center": ["50%", "50%"],
+                        "color": [{"type": "linear", "x": 0, "y": 0, "x2": 0, "y2": 1,
+                                   "colorStops": [{"offset": 0, "color": "#00CC96"}, {"offset": 1, "color": "#006600"}]}],
+                        "label": {"formatter": f"{top5_pct:.1f}%", "color": "#fff", "fontSize": 24, "fontWeight": "bold"},
+                        "outline": {"show": True, "borderDistance": 8, "itemStyle": {"borderWidth": 3, "borderColor": "#00CC96"}},
+                        "backgroundStyle": {"color": "#1a1a2e"}
+                    }]
+                }
+                render_echart(liquid_option, height="220px")
 
-        # Entity correlation
+        # ECharts Heatmap: Whales (rows) vs Months (columns), color = % ownership
+        if unique_dates:
+            target_col.markdown("### ECharts Heatmap: Whales vs Months")
+            whale_list_full = sorted(df_sn_t['INVESTOR_NAME'].unique())
+            # Pivot
+            heatmap_data = df_sn_t.pivot_table(index='INVESTOR_NAME', columns='Date_norm', values='PERCENTAGE', aggfunc='sum').fillna(0)
+            if heatmap_data.shape[0] > 1 and heatmap_data.shape[1] > 1:
+                whales_rows = heatmap_data.index.tolist()[:20]  # limit to 20 whales
+                months_cols = heatmap_data.columns.tolist()
+                heat_values = []
+                for r_idx, whale in enumerate(whales_rows):
+                    for c_idx, m in enumerate(months_cols):
+                        heat_values.append([r_idx, c_idx, round(heatmap_data.loc[whale, m], 2)])
+                heat_option = {
+                    "title": {"text": f"Whales Ownership Heatmap — {ticker}", "left": "center", "textStyle": {"fontSize": 13}},
+                    "tooltip": {"position": "top", "formatter": "function(p) { return p.data[0] + '<br/>' + p.data[1] + '<br/>' + p.data[2] + '%'; }"},
+                    "grid": {"left": "15%", "right": "5%", "bottom": "15%"},
+                    "xAxis": {"type": "category", "data": months_cols, "axisLabel": {"rotate": 30, "fontSize": 9}},
+                    "yAxis": {"type": "category", "data": whales_rows[::-1], "axisLabel": {"fontSize": 9}},
+                    "visualMap": {
+                        "min": 0, "max": max(heatmap_data.max().max(), 5),
+                        "calculable": True,
+                        "inRange": {"color": ["#313695", "#4575b4", "#74add1", "#abd9e9", "#fee090", "#fdae61", "#f46d43", "#d73027"]},
+                        "orient": "horizontal", "left": "center", "bottom": "0%"
+                    },
+                    "series": [{
+                        "type": "heatmap",
+                        "data": heat_values,
+                        "label": {"show": True, "fontSize": 8, "formatter": "function(p) { return p.data[2] + '%'; }"},
+                        "emphasis": {"itemStyle": {"shadowBlur": 10, "shadowColor": "rgba(0, 0, 0, 0.5)"}}
+                    }]
+                }
+                render_echart(heat_option, height="500px")
+
+        # Entity correlation (kept)
         whale_list = sorted(df_sn_t['INVESTOR_NAME'].unique())
         selected_whale = st.selectbox(f"Pilih Entitas Whale - {ticker}", whale_list, key=f"whale_{ticker}")
 
@@ -448,6 +627,104 @@ with tab4:
                            color_continuous_scale='RdYlGn', title="Top 20 Smart Money Score",
                            hover_data={'Total_SM_Net_Val': ':,.0f', 'Total_Retail_Net_Val': ':,.0f'})
         st.plotly_chart(fig_score, use_container_width=True)
+
+        # ECharts Radar Chart: Multi-dimensional Smart Money Score
+        st.markdown("### ECharts Radar: Multi-dimensional Smart Money Score")
+        radar_top_n = min(10, len(df_alert))
+        radar_df = df_alert.head(radar_top_n).copy()
+
+        # Compute per-ticker dimension values
+        radar_dim_data = []
+        for _, row in radar_df.iterrows():
+            code = row['Code']
+            grp = df_sh[(df_sh['Code'] == code) & df_sh['Date_norm'].isin(filtered_dates)]
+            if grp.empty:
+                continue
+            sm_net = grp['Smart_Money_Net_Val'].sum()
+            rt_net = grp['Retail_Net_Val'].sum()
+            cp_net = grp['Corporate_Net_Val'].sum()
+            n_months = len(grp)
+            sm_trend = grp['Smart_Money_Net_Val'].iloc[-1] - grp['Smart_Money_Net_Val'].iloc[0] if n_months >= 2 else 0
+            price_pct = ((grp['Price'].iloc[-1] - grp['Price'].iloc[0]) / grp['Price'].iloc[0] * 100) if n_months >= 2 else 0
+
+            retail_opposite = 1 if (sm_net > 0 and rt_net < 0) else (0.5 if sm_net > 0 else 0)
+            consistency = min(n_months / 6.0, 1.0) if (grp['Smart_Money_Net_Val'] > 0).sum() >= 2 else 0
+            trend_score = min(max(sm_trend / 1e9, -1), 1) * 0.5 + 0.5
+            corp_score = 1 if cp_net > 0 else 0
+            price_momentum = min(max(price_pct / 50, -1), 1) * 0.5 + 0.5
+
+            radar_dim_data.append({
+                "name": code,
+                "value": [
+                    round(min(max(sm_net / 1e9, 0), 10), 2),
+                    round(retail_opposite * 10, 1),
+                    round(consistency * 10, 1),
+                    round(trend_score * 10, 1),
+                    round(corp_score * 10, 1),
+                    round(price_momentum * 10, 1)
+                ]
+            })
+
+        if radar_dim_data:
+            radar_option = {
+                "title": {"text": "Smart Money Score Radar", "left": "center", "textStyle": {"fontSize": 14}},
+                "tooltip": {"trigger": "item"},
+                "legend": {"data": [d["name"] for d in radar_dim_data], "top": 30, "textStyle": {"fontSize": 9}},
+                "radar": {
+                    "indicator": [
+                        {"name": "Net Flow", "max": 10},
+                        {"name": "Retail Opposite", "max": 10},
+                        {"name": "Consistency", "max": 10},
+                        {"name": "Trend", "max": 10},
+                        {"name": "Corporate", "max": 10},
+                        {"name": "Price Action", "max": 10}
+                    ],
+                    "radius": "60%",
+                    "shape": "circle",
+                    "splitNumber": 5,
+                    "axisName": {"color": "#ccc", "fontSize": 9}
+                },
+                "series": [{
+                    "type": "radar",
+                    "data": [{"name": d["name"], "value": d["value"], "areaStyle": {"opacity": 0.15}} for d in radar_dim_data],
+                    "symbol": "none",
+                    "lineStyle": {"width": 2}
+                }]
+            }
+            render_echart(radar_option, height="500px")
+
+        # ECharts Gauge: Score of highest ticker
+        st.markdown("### ECharts Gauge: Smart Money Score — Top Ticker")
+        top_ticker_row = df_alert.iloc[0]
+        top_score = int(top_ticker_row['Smart_Money_Score'])
+        gauge_option = {
+            "series": [{
+                "type": "gauge",
+                "center": ["50%", "60%"],
+                "radius": "90%",
+                "startAngle": 220,
+                "endAngle": -40,
+                "min": 0,
+                "max": 100,
+                "splitNumber": 5,
+                "progress": {"show": True, "width": 20, "itemStyle": {"color": {"type": "linear", "x": 0, "y": 0, "x2": 1, "y2": 0,
+                    "colorStops": [{"offset": 0, "color": "#ff4444"}, {"offset": 0.5, "color": "#ffaa00"}, {"offset": 1, "color": "#00CC96"}]}}},
+                "detail": {
+                    "valueAnimation": True,
+                    "formatter": f"{{value}}/100",
+                    "fontSize": 28,
+                    "color": "#fff",
+                    "offsetCenter": [0, "40%"]
+                },
+                "data": [{"value": top_score, "name": top_ticker_row['Code']}],
+                "title": {"fontSize": 16, "color": "#ccc"},
+                "axisLine": {"lineStyle": {"width": 20, "color": [[0.4, "#ff4444"], [0.7, "#ffaa00"], [1, "#00CC96"]]}},
+                "axisLabel": {"fontSize": 10, "color": "#999"},
+                "pointer": {"width": 6, "length": "60%"}
+            }]
+        }
+        render_echart(gauge_option, height="350px")
+
     else:
         st.warning("Tidak ada ticker memenuhi kriteria skor minimum.")
 
